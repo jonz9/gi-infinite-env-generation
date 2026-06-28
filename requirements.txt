@@ -1,3 +1,4 @@
 pytest
 pygame
 pybox2d
+anthropic
