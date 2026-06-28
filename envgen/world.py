@@ -12,16 +12,25 @@ the Gym-like API in build step 6.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Iterator
 
 from envgen.schema import BLOCKING_TYPES, EntityType, SceneGraph, SceneObject
+
+Coord = tuple[int, int]
 
 
 @dataclass
 class World:
-    """Live state layered on top of a static :class:`SceneGraph`."""
+    """Live state layered on top of a static :class:`SceneGraph`.
+
+    Its spatial surface (``is_wall`` / ``static_block_at`` / ``passable`` /
+    ``neighbors``, all keyed by an ``(x, y)`` :data:`Coord`) deliberately matches
+    :class:`envgen.infinite.InfiniteWorld`, so the navigator in
+    :mod:`envgen.navigate` runs unchanged on the finite and infinite worlds alike.
+    """
 
     scene: SceneGraph
-    player_pos: tuple[int, int] = (0, 0)
+    player_pos: Coord = (0, 0)
     inventory: set[str] = field(default_factory=set)
     opened: set[str] = field(default_factory=set)  # ids of doors already unlocked
 
@@ -33,34 +42,36 @@ class World:
         return cls(scene=scene, player_pos=start)
 
     # -- spatial queries ---------------------------------------------------
-    def in_bounds(self, x: int, y: int) -> bool:
-        return self.scene.grid.in_bounds(x, y)
+    def is_wall(self, pos: Coord) -> bool:
+        return self.scene.grid.is_wall(pos[0], pos[1])
 
-    def is_wall(self, x: int, y: int) -> bool:
-        return self.scene.grid.is_wall(x, y)
-
-    def objects_at(self, x: int, y: int) -> list[SceneObject]:
+    def objects_at(self, pos: Coord) -> list[SceneObject]:
         """Objects whose position is the given cell (excludes the player)."""
         return [
             o
             for o in self.scene.objects
-            if o.pos == (x, y) and o.type is not EntityType.PLAYER
+            if o.pos == pos and o.type is not EntityType.PLAYER
         ]
 
-    def is_blocked_by_object(self, x: int, y: int) -> bool:
-        """True if a blocking object occupies the cell.
+    def static_block_at(self, pos: Coord) -> bool:
+        """A statically blocking object (e.g. a Table) on the cell.
 
-        Tables always block. A Door blocks only while it is still locked and has
-        not yet been opened (an unlocked or opened door is walkable).
+        Doors are *not* treated as static blockers: their locked/open state is
+        runtime, so the navigator passes locked-door tiles via its ``blocked``
+        set (the infinite-world convention, shared with ``InfiniteWorld``).
         """
-        for obj in self.objects_at(x, y):
-            if obj.type not in BLOCKING_TYPES:
-                continue
-            if obj.type is EntityType.DOOR and (not obj.locked or obj.id in self.opened):
-                continue
-            return True
-        return False
+        return any(
+            obj.type in BLOCKING_TYPES and obj.type is not EntityType.DOOR
+            for obj in self.objects_at(pos)
+        )
 
-    def passable(self, x: int, y: int) -> bool:
+    def passable(self, pos: Coord) -> bool:
         """Whether the player could stand on the cell right now."""
-        return not self.is_wall(x, y) and not self.is_blocked_by_object(x, y)
+        return not self.is_wall(pos) and not self.static_block_at(pos)
+
+    def neighbors(self, pos: Coord) -> Iterator[Coord]:
+        """4-connected passable neighbors — the only graph primitive BFS/A* need."""
+        x, y = pos
+        for nxt in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+            if self.passable(nxt):
+                yield nxt

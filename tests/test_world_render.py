@@ -19,12 +19,19 @@ def test_world_seeds_player_position() -> None:
 
 def test_passable_rules() -> None:
     w = _world()
-    assert w.passable(1, 1) is True  # floor (player start)
-    assert w.passable(0, 0) is False  # border wall
-    assert w.passable(2, 2) is False  # table always blocks
-    assert w.passable(6, 3) is False  # locked door blocks
-    w.opened.add("door1")
-    assert w.passable(6, 3) is True  # ...until opened
+    assert w.passable((1, 1)) is True  # floor (player start)
+    assert w.passable((0, 0)) is False  # border wall
+    assert w.passable((2, 2)) is False  # table is a static blocker
+    # Infinite-world convention: doors are never static blockers. Locked-door
+    # gating is the navigator's job via its `blocked` set, not `passable`.
+    assert w.passable((6, 3)) is True
+
+
+def test_neighbors_are_passable() -> None:
+    w = _world()
+    nbrs = set(w.neighbors((1, 1)))
+    assert (2, 1) in nbrs and (1, 2) in nbrs  # open floor
+    assert (0, 1) not in nbrs and (1, 0) not in nbrs  # border walls
 
 
 def test_render_shape_and_glyphs() -> None:

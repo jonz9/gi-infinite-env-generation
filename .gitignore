@@ -77,3 +77,6 @@ runs/
 
 # Claude
 .claude/
+
+# notes md files
+README.md
