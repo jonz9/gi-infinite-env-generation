@@ -1,32 +1,37 @@
 #!/usr/bin/env python3
-"""End-to-end harness: text prompt -> scene -> validate -> render -> solve.
+"""End-to-end harness: scene graph -> validate -> render -> solve.
 
-This is the deliverable entrypoint. It walks the full finite-world loop for one
-prompt and prints a human-readable trace ending in SOLVED or FAILED.
+This is the deliverable entrypoint, and it is **host-agnostic and key-free**. It
+runs the deterministic half of the loop on a scene graph (JSON):
+
+    validate -> render (ASCII) -> solve (BFS) -> SOLVED / FAILED
+
+Where does the scene come from? The *agent running this repo* is the planner. The
+intended flow (see AGENTS.md) is:
+
+    1. agent reads a natural-language prompt,
+    2. agent writes a scene graph to a .json file matching envgen/schema.py,
+    3. agent runs:  python run.py <that file.json>
+
+No vendor SDK, no ANTHROPIC_API_KEY. With no argument it runs the bundled worked
+example, so the loop is always runnable with zero setup.
 
 Usage::
 
-    python run.py "a room with two tables, a key behind a wall, a locked door"
-    python run.py --offline "..."   # skip the LLM, use the bundled example scene
-    python run.py                    # no prompt -> offline demo on the example
+    python run.py                       # demo on the bundled example
+    python run.py path/to/scene.json    # run an agent-authored scene
 
-Planning calls Claude (needs ANTHROPIC_API_KEY and the `anthropic` package). When
-the key is missing, or with --offline / no prompt, the harness falls back to the
-bundled `examples/room_key_door.json` so the loop is always runnable. Exit code is
-0 when the generated environment is SOLVED, 1 when not, 2 on a planning failure.
+Exit code: 0 when SOLVED, 1 when FAILED, 2 when the scene won't parse/validate.
 """
 
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 from pathlib import Path
 
-from envgen.planner import DEFAULT_MODEL
 from envgen.render import render_scene
-from envgen.repair import RepairError, plan_valid
-from envgen.schema import SceneGraph
+from envgen.schema import SceneGraph, SchemaError
 from envgen.solve import solve
 from envgen.validate import validate
 
@@ -37,37 +42,41 @@ def _rule(title: str) -> None:
     print(f"\n=== {title} ===")
 
 
-def _obtain_scene(prompt: str | None, offline: bool, model: str) -> tuple[SceneGraph, str]:
-    """Return (scene, provenance). Falls back to the bundled example offline."""
-    use_llm = bool(prompt) and not offline and bool(os.environ.get("ANTHROPIC_API_KEY"))
-    if not use_llm:
-        why = "offline flag" if offline else "no prompt" if not prompt else "no ANTHROPIC_API_KEY"
-        return SceneGraph.from_json(EXAMPLE.read_text()), f"bundled example ({why})"
-    scene, attempts = plan_valid(prompt, model=model)  # already validated + repaired
-    return scene, f"planned by Claude ({model}); {len(attempts)} attempt(s)"
+def _load_scene(path: Path) -> SceneGraph:
+    """Read and parse a scene graph file (raises SchemaError on bad JSON/schema)."""
+    return SceneGraph.from_json(path.read_text())
 
 
 def main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(description="Text -> playable 2D environment -> solver.")
-    parser.add_argument("prompt", nargs="?", default=None, help="natural-language level request")
-    parser.add_argument("--offline", action="store_true", help="skip the LLM; use the bundled example")
-    parser.add_argument("--model", default=DEFAULT_MODEL, help=f"Claude model id (default {DEFAULT_MODEL})")
+    parser = argparse.ArgumentParser(
+        description="Scene graph -> validate -> render -> solve (key-free)."
+    )
+    parser.add_argument(
+        "scene",
+        nargs="?",
+        default=None,
+        help="path to a scene-graph JSON file (default: bundled example)",
+    )
     args = parser.parse_args(argv)
 
-    _rule("PROMPT")
-    print(args.prompt or "(none — offline demo)")
+    path = Path(args.scene) if args.scene else EXAMPLE
+    provenance = "agent-authored scene" if args.scene else "bundled example (no scene given)"
 
     _rule("SCENE")
     try:
-        scene, provenance = _obtain_scene(args.prompt, args.offline, args.model)
-    except RepairError as exc:
-        print(f"planning failed: {exc}")
+        scene = _load_scene(path)
+    except (OSError, SchemaError) as exc:
+        print(f"could not load scene from {path}: {exc}")
         return 2
-    print(f"source: {provenance}\ngoal: {scene.goal}")
+    print(f"source: {provenance} -> {path}\ngoal: {scene.goal}")
 
     _rule("VALIDATION")
     report = validate(scene)
-    print("ok" if report.ok else "INVALID:\n  " + "\n  ".join(report.errors))
+    if report.ok:
+        print("ok")
+    else:
+        print("INVALID:\n  " + "\n  ".join(report.errors))
+        return 2
 
     _rule("RENDER")
     print(render_scene(scene))

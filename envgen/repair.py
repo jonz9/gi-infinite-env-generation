@@ -63,10 +63,10 @@ class RepairError(RuntimeError):
     """
 
 
-def _attempt(prompt: str, complete: Complete | None, model: str) -> Attempt:
+def _attempt(prompt: str, complete: Complete) -> Attempt:
     """Run one plan + validate pass, capturing any failure as an :class:`Attempt`."""
     try:
-        scene = planner.plan(prompt, complete=complete, model=model)
+        scene = planner.plan(prompt, complete=complete)
     except SchemaError as exc:
         return Attempt(scene=None, errors=[], raw_error=str(exc))
     report = validate(scene)
@@ -84,13 +84,12 @@ def _augment(prompt: str, attempt: Attempt) -> str:
 def plan_valid(
     prompt: str,
     *,
-    complete: Complete | None = None,
+    complete: Complete,
     max_retries: int = 3,
-    model: str = "claude-opus-4-8",
 ) -> tuple[SceneGraph, list[Attempt]]:
     """Plan a *validated* scene graph, repairing via planner feedback on failure.
 
-    Calls :func:`envgen.planner.plan` (threading the injectable ``complete``
+    Calls :func:`envgen.planner.plan` (threading the required ``complete`` model
     seam) and runs :func:`envgen.validate.validate` on the result. On any
     failure -- a :class:`~envgen.schema.SchemaError` (bad JSON/schema) or a
     non-empty :class:`~envgen.validate.ValidationReport` -- it appends the
@@ -106,7 +105,7 @@ def plan_valid(
     attempts: list[Attempt] = []
     current_prompt = prompt
     for _ in range(max_retries):
-        attempt = _attempt(current_prompt, complete, model)
+        attempt = _attempt(current_prompt, complete)
         attempts.append(attempt)
         if attempt.ok:
             assert attempt.scene is not None  # narrow for type-checkers

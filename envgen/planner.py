@@ -1,20 +1,23 @@
 """Planner (build step 3): natural language prompt -> schema-valid scene graph.
 
-The planner prompts Claude with the schema (loaded from
-``prompts/planner_system.md`` — prompts never live in source) and parses the
-model's reply into a :class:`~envgen.schema.SceneGraph`. There is deliberately
-no code-generation step: the model emits JSON, which the engine consumes
-directly.
+The planner is **host-agnostic and key-free**. It does not embed any model SDK.
+Instead it exposes the schema (loaded from ``prompts/planner_system.md`` — prompts
+never live in source) and parses raw model text into a
+:class:`~envgen.schema.SceneGraph`. There is deliberately no code-generation step:
+the model emits JSON, which the engine consumes directly.
 
-The model call is injectable via the ``complete`` seam so the planner can be
-exercised fully offline (see ``tests/test_planner.py``). The default ``complete``
-calls the Anthropic SDK; that path needs ``ANTHROPIC_API_KEY`` and the
-``anthropic`` package, neither of which the offline tests touch.
+Who supplies the model text? The *agent that runs this repo* — Claude Code, Codex,
+or anything else. The LLM is the harness: the agent reads the prompt, emits a scene
+graph, and the deterministic pipeline (validate -> render -> solve) takes over. No
+``ANTHROPIC_API_KEY``, no vendor SDK.
+
+The model call is an injectable ``complete`` seam: any
+``(system_prompt, user_prompt) -> raw text`` callable. Tests inject a canned one
+(see ``tests/test_planner.py``); a caller who wants a specific model wires their own.
 """
 
 from __future__ import annotations
 
-import json
 import re
 from pathlib import Path
 from typing import Callable
@@ -23,8 +26,6 @@ from envgen.schema import SceneGraph
 
 # Type of the injectable model seam: (system_prompt, user_prompt) -> raw text.
 Complete = Callable[[str, str], str]
-
-DEFAULT_MODEL = "claude-opus-4-8"
 
 _PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts" / "planner_system.md"
 
@@ -84,54 +85,37 @@ def _first_balanced_object(text: str) -> str | None:
     return None
 
 
-def _anthropic_complete(model: str) -> Complete:
-    """Build a default ``complete`` backed by the Anthropic SDK.
+def parse_scene(raw: str) -> SceneGraph:
+    """Parse raw model text into a scene graph (no model call).
 
-    The ``anthropic`` import is lazy so this module imports fine without the
-    package installed (only the live path needs it).
+    Strips any prose/fences via :func:`extract_json` and parses via
+    :meth:`SceneGraph.from_json`. A :class:`~envgen.schema.SchemaError` from bad
+    JSON or a bad schema propagates (the repair loop, build step 5, catches it).
+    This is the seam the host agent uses: it produces the text, this parses it.
     """
-
-    def complete(system_prompt: str, user_prompt: str) -> str:
-        import anthropic  # lazy: keeps the dependency optional for offline use
-
-        client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY from the env
-        msg = client.messages.create(
-            model=model,
-            max_tokens=2000,
-            system=system_prompt,
-            messages=[{"role": "user", "content": user_prompt}],
-        )
-        return msg.content[0].text
-
-    return complete
-
-
-def plan(
-    prompt: str,
-    *,
-    complete: Complete | None = None,
-    model: str = DEFAULT_MODEL,
-) -> SceneGraph:
-    """Plan a scene graph from a natural-language ``prompt``.
-
-    ``complete`` is the injectable model seam taking ``(system_prompt,
-    user_prompt)`` and returning raw model text; when ``None`` a default backed
-    by the Anthropic SDK is used. The raw text is stripped of any prose/fences
-    and parsed via :meth:`SceneGraph.from_json` — a
-    :class:`~envgen.schema.SchemaError` from bad JSON or a bad schema propagates
-    (the repair loop, build step 5, catches it).
-    """
-    system_prompt = load_system_prompt()
-    do_complete = complete if complete is not None else _anthropic_complete(model)
-    raw = do_complete(system_prompt, prompt)
     return SceneGraph.from_json(extract_json(raw))
 
 
-if __name__ == "__main__":  # pragma: no cover - needs a real API key
+def plan(prompt: str, *, complete: Complete) -> SceneGraph:
+    """Plan a scene graph from a natural-language ``prompt``.
+
+    ``complete`` is the (required) model seam taking ``(system_prompt,
+    user_prompt)`` and returning raw model text. There is no built-in vendor SDK:
+    the host agent, a test, or a caller's own model supplies it. The returned text
+    is parsed via :func:`parse_scene`.
+    """
+    raw = complete(load_system_prompt(), prompt)
+    return parse_scene(raw)
+
+
+if __name__ == "__main__":  # pragma: no cover - simple stdin utility, no network
     import sys
 
-    if len(sys.argv) < 2:
-        print('usage: python3 -m envgen.planner "<prompt>"', file=sys.stderr)
+    # Key-free utility: pipe raw model output in, get a clean validated scene out.
+    #   <agent emits JSON> | python3 -m envgen.planner
+    raw = sys.stdin.read()
+    if not raw.strip():
+        print("usage: <raw model text with a JSON scene> | python3 -m envgen.planner",
+              file=sys.stderr)
         raise SystemExit(2)
-    scene = plan(sys.argv[1])
-    print(scene.to_json())
+    print(parse_scene(raw).to_json())

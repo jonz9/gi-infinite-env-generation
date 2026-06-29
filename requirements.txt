@@ -1,4 +1,10 @@
+# The harness core is pure Python standard library — no runtime dependencies,
+# no model SDK, no API key. The agent that runs the repo is the planner.
+#
+# Only the test suite needs a third-party package:
 pytest
-pygame
-pybox2d
-anthropic
+
+# Deferred extensions (NOT required to run the harness):
+#   pygame   — sprite renderer (the ASCII renderer is the default)
+#   pybox2d  — continuous-physics engine for the Box2D mode
+# Install these only if/when you build those extensions.

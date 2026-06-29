@@ -79,4 +79,5 @@ runs/
 .claude/
 
 # notes md files
+tmp/*
 README.md
