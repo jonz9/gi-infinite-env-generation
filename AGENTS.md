@@ -1,10 +1,21 @@
 # AGENTS.md — how any agent runs this repo
 
-This repo turns a **natural-language prompt** into a **playable 2D grid
-environment** and **proves it solvable**. It is host-agnostic and key-free: *you,
-the agent reading this* (Claude Code, Codex, or anything else), are the planner.
-There is no model SDK and no API key. You emit a scene graph; deterministic Python
-validates, renders, and solves it.
+This repo turns **natural language** into a **playable 2D grid environment** and
+**proves it solvable**. It is host-agnostic and key-free: *you, the agent reading
+this* (Claude Code, Codex, or anything else), are the harness. There is no model
+SDK and no API key. You emit JSON (scene graphs / edit ops); deterministic Python
+validates, renders, and solves.
+
+## Where this is going
+
+The end goal is **not** a one-shot level generator. It is an **infinitely
+generating + changing harness**: a persistent session where you grow and mutate an
+unbounded, provably-solvable world through a *stream* of natural-language commands.
+Natural language compiles to a closed **edit algebra** (typed ops like `AddObject`,
+`MoveObject`, `Carve`, `Extend`, `SetGoal`) applied to a living world state, with
+solvability kept as an invariant across every edit. "Generate more world" is just
+the `Extend` op. **Build toward that.** The one-shot scene flow below is Phase 0, the
+verified substrate the harness is built on.
 
 ## To generate an environment from a prompt
 
@@ -69,5 +80,4 @@ See `examples/room_key_door.json` for a complete worked example.
 - Don't generate or `exec` Python for levels — emit the JSON scene graph only.
 - Don't validate/render/solve by hand — run `python run.py`; that is the harness.
 
-For the full design rationale and working log, see `.claude/handoff.md` and
-`README.md`.
+For the full design rationale, see `README.md`.
