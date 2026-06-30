@@ -81,3 +81,5 @@ runs/
 # notes md files
 tmp/*
 README.md
+tickets/*
+tests/*
