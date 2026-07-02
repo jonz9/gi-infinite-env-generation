@@ -17,8 +17,12 @@ The user runs nothing and writes no JSON — you do everything:
 2. **Prove it:** run `python3 run.py scene.json`. If it fails, the error names the
    exact problem — fix the JSON and re-run until SOLVED. Never show the user a
    broken world or ask them to debug.
-3. **Show it:** the ASCII render + the SOLVED verdict; write PNGs with
-   `python3 -m envgen.pixels scene.json frames/` if they want visuals.
+3. **Show it in the engine:** `python3 -m envgen.engines.play scene.json` opens a
+   pygame window and drives the proven plan through the **Box2D physics world**
+   (walls/doors are solid bodies; the lock is collision, not bookkeeping). Headless:
+   `--headless frames/` writes the rollout as PNGs; `--interactive` lets the user
+   drive with WASD. If the pygame/Box2D extras are missing, fall back to the
+   stdlib PNG frames (`python3 -m envgen.pixels`) and the ASCII render.
 4. **Change, don't regenerate:** follow-ups ("add a second key", "move the exit")
    are live edits — drive `harness.py` (or `HarnessSession.step`) on the *same*
    world so the op-log and determinism guarantees hold.
@@ -57,6 +61,8 @@ with a reason — the world is never left broken. Meta-commands:
 :objective            show the live typed objective + SOLVED status
 :frame out.png        render the live world to one PNG
 :frames dir/          prove the objective, write one PNG per step of the proof
+:play [dir/]          execute the plan in the Box2D physics engine — pygame
+                      window, or headless rollout PNGs into [dir]
 :save f / :load f     persist / restore (seed + scene + op-log)
 :undo / :redo         step history
 :replay               verify seed + op-log reproduces the live scene hash-for-hash
@@ -131,10 +137,15 @@ print(sorted(registered_ops()))"`. Macro verbs for infinite worlds: `Extend`,
   objective execution — every accepted state is *provably* winnable, never "looks ok".
 - **Atomicity:** a bad edit is rejected with a specific reason; the world stands.
 - **Determinism:** `seed + op-log` reproduces any world exactly (`:replay` checks it).
-- **Rendering:** ASCII (`envgen.render`) and dependency-free PNG frames
-  (`envgen.pixels`); optional PyGame window (`python3 -m envgen.pygame_view`).
-- **Zero deps:** everything above is pure stdlib; `pytest` only for the suite
-  (`python3 -m pytest -q`), `pygame` only for the optional viewer.
+- **Physics execution:** the same scene runs as a Box2D rigid-body world
+  (`envgen.engines`) — solid walls/doors/tables, sensor keys/exits, a waypoint
+  controller driving the proven plan, the typed objective judged on the physical
+  end-state. PyGame renders it live; headless PNG capture needs no display.
+- **Rendering fallbacks:** dependency-free PNG frames (`envgen.pixels`) and ASCII
+  (`envgen.render`) always work, even with no extras installed.
+- **Deps:** the core (validate/prove/edit/render-PNG) is pure stdlib. Extras:
+  `pip install pygame Box2D` for the physics engine + window, `pytest` for the
+  suite (`python3 -m pytest -q`).
 
 ## What NOT to do
 

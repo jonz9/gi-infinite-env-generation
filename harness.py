@@ -8,7 +8,7 @@ self-healing world. Each input line is one of:
 * a **raw op-JSON** dict, e.g. ``{"op": "MoveObject", "id": "player", "to": [1, 1]}``;
 * a **meta-command** beginning with ``:`` — ``:save <f>``, ``:load <f>``,
   ``:undo``, ``:redo``, ``:replay``, ``:objective``, ``:frame <f>``,
-  ``:frames <dir>``, ``:help``, ``:quit``.
+  ``:frames <dir>``, ``:play [dir]``, ``:help``, ``:quit``.
 
 A command/op line is compiled to an :class:`~envgen.edit.base.EditOp`, applied via
 :meth:`HarnessSession.step`, and the resulting render + ``SOLVED``/``FAILED`` verdict
@@ -51,6 +51,8 @@ meta-commands:
   :objective           show the live typed objective (set it via 'goal <json>')
   :frame <file.png>    render the live world to one PNG frame
   :frames <dir>        solve the live world; write one PNG per step to <dir>
+  :play [dir]          drive the plan through the Box2D physics engine — live
+                       pygame window, or headless PNGs into [dir] if given
   :help                show this help
   :quit                leave the REPL"""
 
@@ -159,6 +161,8 @@ class Harness:
             self._frame(arg)
         elif name == ":frames":
             self._frames(arg)
+        elif name == ":play":
+            self._play(arg)
         else:
             self.emit(f"unknown meta-command {name!r}; try :help")
         return False
@@ -263,6 +267,31 @@ class Harness:
             self.emit(f":frames failed: {exc}")
             return
         self.emit(f"wrote {len(paths)} frame(s) to {arg} — {result.reason}")
+
+    def _play(self, arg: str) -> None:
+        """Execute the plan in the Box2D physics engine (window, or PNGs to a dir)."""
+        try:
+            from envgen.engines import play as physics
+        except Exception:
+            self.emit(":play not available")
+            return
+        try:
+            if arg:
+                result, frames = physics.run_headless(self.session.scene, arg)
+                self.emit(f"wrote {len(frames)} physics frame(s) to {arg}")
+            else:
+                result = physics.play(self.session.scene)
+                if result is None:
+                    self.emit("window closed")
+                    return
+        except RuntimeError as exc:   # actionable install hints from the engine
+            self.emit(f":play failed: {exc}")
+            return
+        except Exception as exc:
+            self.emit(f":play failed: {exc}")
+            return
+        verdict = "PHYSICS SOLVED" if result.solved else "PHYSICS FAILED"
+        self.emit(f"{verdict} — {result.reason}")
 
     def _replay(self) -> None:
         """Verify the op-log replays to the live scene via ``envgen.session.replay``."""
