@@ -35,9 +35,9 @@ import json
 from typing import Sequence
 
 from envgen.edit import EditOp, clone_scene
+from envgen.objective_solve import solve_objective
 from envgen.schema import SceneGraph
 from envgen.session.base import HarnessSessionProtocol, Transcript
-from envgen.solve import solve
 from envgen.validate import validate
 
 
@@ -128,7 +128,7 @@ class History:
         self.session.scene = restored
         # Every snapshot was a committed (valid+solvable) state; recompute to keep
         # the session's invariant flag exact rather than assuming it.
-        self.session.solved = bool(validate(restored).ok and solve(restored).solved)
+        self.session.solved = bool(validate(restored).ok and solve_objective(restored).solved)
         self._last_seen_hash = scene_hash(restored)
 
 

@@ -21,10 +21,10 @@ import json
 from typing import Any, Sequence
 
 from envgen.edit import EditError, EditOp, apply_ops, op_from_dict
+from envgen.objective_solve import solve_objective
 from envgen.render import render_scene
 from envgen.schema import SceneGraph
 from envgen.session.base import OpLogEntry, Transcript
-from envgen.solve import solve
 from envgen.validate import validate
 
 
@@ -53,7 +53,9 @@ class HarnessSession:
         self.scene = scene
         self.seed = seed
         self._log: list[OpLogEntry] = []
-        self.solved = bool(validate(scene).ok and solve(scene).solved)
+        # the invariant is the typed objective (legacy 'reach exit' included), so an
+        # edit that keeps the exit reachable but breaks the objective is still rejected
+        self.solved = bool(validate(scene).ok and solve_objective(scene).solved)
 
     def log(self) -> list[OpLogEntry]:
         """The ordered op-log (accepted + rejected); with the seed, reproduces state."""
@@ -74,7 +76,7 @@ class HarnessSession:
             return self._reject(op_dicts, str(exc), before)
 
         report = validate(candidate)
-        result = solve(candidate) if report.ok else None
+        result = solve_objective(candidate) if report.ok else None
         ok = report.ok and result is not None and result.solved
         if not ok:
             reason = "; ".join(report.errors) or (
