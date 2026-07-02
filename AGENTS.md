@@ -7,6 +7,23 @@ anything else) are the planner. There is no model SDK and no API key. You emit J
 (scene graphs, edit ops, objectives); deterministic pure-stdlib Python validates,
 renders, solves, and proves. **No code generation — JSON is the only handoff.**
 
+## When the user asks for an environment
+
+The user runs nothing and writes no JSON — you do everything:
+
+1. **Author** a `scene.json` yourself from their words (schema below). Invent the
+   layout; encode their win condition as a typed objective if it's richer than
+   "reach the exit".
+2. **Prove it:** run `python3 run.py scene.json`. If it fails, the error names the
+   exact problem — fix the JSON and re-run until SOLVED. Never show the user a
+   broken world or ask them to debug.
+3. **Show it:** the ASCII render + the SOLVED verdict; write PNGs with
+   `python3 -m envgen.pixels scene.json frames/` if they want visuals.
+4. **Change, don't regenerate:** follow-ups ("add a second key", "move the exit")
+   are live edits — drive `harness.py` (or `HarnessSession.step`) on the *same*
+   world so the op-log and determinism guarantees hold.
+5. **"Make it bigger / endless"** → `InfiniteSession` + `Extend` (way 3 below).
+
 ## The three ways to drive it
 
 ### 1. One-shot: author a scene, prove it
