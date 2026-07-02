@@ -1,57 +1,71 @@
-# AGENTS.md — how any agent runs this repo
+# AGENTS.md — how any agent drives this harness
 
-This repo turns **natural language** into a **playable 2D grid environment** and
-**proves it solvable**. It is host-agnostic and key-free: *you, the agent reading
-this* (Claude Code, Codex, or anything else), are the harness. There is no model
-SDK and no API key. You emit JSON (scene graphs / edit ops); deterministic Python
-validates, renders, and solves.
+This repo turns **natural-language intent** into **playable, provably-solvable 2D
+environments** — and lets you keep changing and growing them while the proof holds.
+It is host-agnostic and key-free: *you, the agent reading this* (Claude Code, Codex,
+anything else) are the planner. There is no model SDK and no API key. You emit JSON
+(scene graphs, edit ops, objectives); deterministic pure-stdlib Python validates,
+renders, solves, and proves. **No code generation — JSON is the only handoff.**
 
-## Where this is going
+## The three ways to drive it
 
-The end goal is **not** a one-shot level generator. It is an **infinitely
-generating + changing harness**: a persistent session where you grow and mutate an
-unbounded, provably-solvable world through a *stream* of natural-language commands.
-Natural language compiles to a closed **edit algebra** (typed ops like `AddObject`,
-`MoveObject`, `Carve`, `Extend`, `SetGoal`) applied to a living world state, with
-solvability kept as an invariant across every edit. "Generate more world" is just
-the `Extend` op. **Build toward that.** The one-shot scene flow below is Phase 0, the
-verified substrate the harness is built on.
+### 1. One-shot: author a scene, prove it
 
-## To generate an environment from a prompt
-
-1. **Read the schema** in `envgen/schema.py` and the level-designer brief in
-   `prompts/planner_system.md`. The scene graph is the only handoff — JSON in, no
-   code generation.
-2. **Write a scene graph** to `scene.json` matching the schema (shape below).
-3. **Run it:**
+1. Read the schema (`envgen/schema.py`; shape below) and, if useful, the
+   level-designer brief in `prompts/planner_system.md`.
+2. Write a `scene.json`.
+3. Run:
    ```bash
-   python run.py scene.json
+   python3 run.py scene.json        # validate → render ASCII → BFS-solve → SOLVED/FAILED
+   python3 -m envgen.pixels scene.json frames/   # same, but writes one PNG per solver step
    ```
-   This validates → renders ASCII → runs the BFS solver → prints `SOLVED` or
-   `FAILED`. Exit code 0 = SOLVED, 1 = FAILED, 2 = won't parse/validate.
-4. **If validation fails**, the output lists the exact problems (unreachable exit,
-   key-behind-its-own-door, overlaps, out-of-bounds, …). Fix `scene.json` and
-   re-run. That is the repair loop, done by you.
+   Exit 0 = SOLVED, 1 = FAILED, 2 = won't parse/validate. On failure the output
+   names the exact problem (unreachable exit, key-behind-its-own-door, overlap,
+   out-of-bounds…). Fix the JSON and re-run — you are the repair loop.
 
-## Run with no LLM at all (determinism check)
+### 2. Live session: build and change a world that stays solvable
 
 ```bash
-python run.py                 # runs the bundled worked example, zero setup
-python -m pytest -q           # full offline test suite
+python3 harness.py [scene.json]     # REPL over a persistent, self-healing world
 ```
 
-The whole engine (validate / render / solve) is pure standard library — the
-correctness of the harness never depends on any agent or key.
+Each line is a typed command (`add key at 2,5 opens door1`, `move player to 1,1`,
+`carve 4,4 floor`, `fill 2,2 5,5 wall`, `remove table1`, `setprop door1 locked true`,
+`goal <text-or-json>`) **or** a raw op-JSON dict (`{"op": "MoveObject", "id":
+"player", "to": [1, 1]}`). Every step is **atomic**: ops apply to a clone, the result
+is re-validated and re-proved, and a step that would break the objective is rejected
+with a reason — the world is never left broken. Meta-commands:
 
-## Scene graph shape
+```
+:objective            show the live typed objective + SOLVED status
+:frame out.png        render the live world to one PNG
+:frames dir/          prove the objective, write one PNG per step of the proof
+:save f / :load f     persist / restore (seed + scene + op-log)
+:undo / :redo         step history
+:replay               verify seed + op-log reproduces the live scene hash-for-hash
+```
+
+Programmatic equivalents: `envgen.session.core.HarnessSession.step(ops)`, and
+`envgen.compile.compile_edit(scene, "your command", complete=...)` to turn free NL
+into ops (the `complete` seam is any text-completion callable — you, usually).
+
+### 3. Infinite worlds: growing is just another edit
+
+`envgen.worldgen.session_adapter.InfiniteSession` holds an unbounded world
+(`world(seed, x, y) → tile`, lazily chunked, bounded memory). Macro ops
+`Extend(direction, n, biome)` / `SetBiome(...)` grow and repaint it;
+`session.window(x0, y0, w, h)` materializes any slice as a normal finite scene, so
+everything above (ops, render, solve, frames) applies to the visible region.
+Solvability is proved across chunks by lazy BFS (`worldgen.lazy_validate` /
+`lazy_solve`), hazards routed around. Biomes/chunk-generators are registries
+(`armory`, `flooded_crypt`, `swamp` / `flat`, `maze`, `caves`, `rooms`) — add one by
+dropping a self-registering module, never by editing a central file.
+
+## Scene graph shape (the IR)
 
 ```json
 {
-  "grid": {
-    "w": 12,
-    "h": 8,
-    "tiles": [[1,1,1,...], [1,0,0,...], ...]
-  },
+  "grid": { "w": 12, "h": 8, "tiles": [[1,1,1], [1,0,1], [1,1,1]] },
   "objects": [
     {"id": "player", "type": "Player", "pos": [1, 1]},
     {"id": "table1", "type": "Table",  "pos": [2, 2]},
@@ -63,21 +77,52 @@ correctness of the harness never depends on any agent or key.
 }
 ```
 
-- **Coordinates:** `pos` is `[x, y]`; `x` = column `0..w-1`, `y` = row `0..h-1`.
-  The tile layer is `tiles[y][x]`. Origin `(0,0)` is top-left.
-- **Tiles:** `1` = wall (blocking), `0` = floor (walkable).
-- **Object types:** `Player` (exactly one), `Table` (static blocker), `Key`
-  (`opens` → a Door id), `Door` (`locked: true|false`), `Exit` (the goal).
-- **Solvability rules the validator enforces:** the Exit must be reachable; every
-  Key must be reachable *before* its locked door opens (no key locked behind its
-  own door); objects in-bounds and not overlapping incompatibly.
+- `pos` is `[x, y]`: `x` = column `0..w-1`, `y` = row `0..h-1`; tiles are
+  `tiles[y][x]`, `1` = wall, `0` = floor; origin top-left.
+- Types: `Player` (exactly one), `Table` (blocker), `Key` (`opens` → Door id),
+  `Door` (`locked`), `Exit`. Extended kinds (Lava/Water/Ice hazards) live in the
+  `envgen.entities` registry and are honored by the infinite-world proofs.
+- Worked example: `examples/room_key_door.json`.
 
-See `examples/room_key_door.json` for a complete worked example.
+## Typed objectives (code-level win conditions)
+
+`goal` also accepts a JSON predicate — this is what "code-level objectives" means:
+
+```json
+{"all": [{"pred": "has", "item": "key1"}, {"pred": "reach", "target": "exit"}]}
+```
+
+Predicates: `{"pred":"reach","target":<id>}` (stand on it), `{"pred":"has","item":
+<id>}` (collected), `{"all":[…]}`, `{"any":[…]}`. The harness plans for the
+*predicate* (detouring to collect `has` items), executes the plan on the real env,
+and accepts only if the predicate holds on the end state. In a live session the
+objective **is the invariant**: an edit that keeps the exit reachable but breaks the
+objective is rejected. Plain-string goals mean `reach <exit>` (backward compatible).
+
+## Edit ops (the verbs)
+
+`AddObject · RemoveObject · MoveObject · CloneObject · SwapObjects · SetProp ·
+SetGoal · Carve · FillRegion · AddWallLine · ConnectCorridor · StampRoom ·
+ResizeGrid` — all pure, JSON-round-trip, invertible (exactly or via recorded
+restore). Enumerate live: `python3 -c "from envgen.edit import registered_ops;
+print(sorted(registered_ops()))"`. Macro verbs for infinite worlds: `Extend`,
+`SetBiome`.
+
+## Guarantees the harness gives you
+
+- **Verification:** structural checks + BFS reachability + key-before-door +
+  objective execution — every accepted state is *provably* winnable, never "looks ok".
+- **Atomicity:** a bad edit is rejected with a specific reason; the world stands.
+- **Determinism:** `seed + op-log` reproduces any world exactly (`:replay` checks it).
+- **Rendering:** ASCII (`envgen.render`) and dependency-free PNG frames
+  (`envgen.pixels`); optional PyGame window (`python3 -m envgen.pygame_view`).
+- **Zero deps:** everything above is pure stdlib; `pytest` only for the suite
+  (`python3 -m pytest -q`), `pygame` only for the optional viewer.
 
 ## What NOT to do
 
-- Don't add a model SDK or an API-key code path — the agent is the planner.
-- Don't generate or `exec` Python for levels — emit the JSON scene graph only.
-- Don't validate/render/solve by hand — run `python run.py`; that is the harness.
-
-For the full design rationale, see `README.md`.
+- Don't add a model SDK or API-key path — the agent is the planner.
+- Don't generate or `exec` code for levels — emit JSON (scenes, ops, objectives).
+- Don't verify by hand — run the harness; the proof is the product.
+- Don't edit frozen contract files (`base.py`, `__init__.py`, Phase-0 modules) —
+  extend via the registries (ops, kinds, biomes, chunkgens, metrics).
