@@ -7,7 +7,8 @@ self-healing world. Each input line is one of:
   e.g. ``add key at 2,5 opens door1`` or ``move player to 1,1``;
 * a **raw op-JSON** dict, e.g. ``{"op": "MoveObject", "id": "player", "to": [1, 1]}``;
 * a **meta-command** beginning with ``:`` — ``:save <f>``, ``:load <f>``,
-  ``:undo``, ``:redo``, ``:replay``, ``:help``, ``:quit``.
+  ``:undo``, ``:redo``, ``:replay``, ``:objective``, ``:frame <f>``,
+  ``:frames <dir>``, ``:help``, ``:quit``.
 
 A command/op line is compiled to an :class:`~envgen.edit.base.EditOp`, applied via
 :meth:`HarnessSession.step`, and the resulting render + ``SOLVED``/``FAILED`` verdict
@@ -47,6 +48,9 @@ meta-commands:
   :undo                undo the last accepted edit (if history is available)
   :redo                redo the last undone edit (if history is available)
   :replay              verify the op-log replays to the live scene hash-for-hash
+  :objective           show the live typed objective (set it via 'goal <json>')
+  :frame <file.png>    render the live world to one PNG frame
+  :frames <dir>        solve the live world; write one PNG per step to <dir>
   :help                show this help
   :quit                leave the REPL"""
 
@@ -149,6 +153,12 @@ class Harness:
             self._history("redo")
         elif name == ":replay":
             self._replay()
+        elif name == ":objective":
+            self._objective()
+        elif name == ":frame":
+            self._frame(arg)
+        elif name == ":frames":
+            self._frames(arg)
         else:
             self.emit(f"unknown meta-command {name!r}; try :help")
         return False
@@ -210,6 +220,50 @@ class Harness:
         self.emit(render_scene(self.session.scene))
         self.emit(f"{direction} ok")
 
+    def _objective(self) -> None:
+        """Print the live typed objective (and the raw goal it parsed from)."""
+        from envgen.objective import objective_from_scene
+
+        scene = self.session.scene
+        self.emit(f"objective: {objective_from_scene(scene).describe()}")
+        self.emit(f"goal: {scene.goal}")
+        self.emit("status: SOLVED" if self.session.solved else "status: NOT satisfiable")
+
+    def _frame(self, arg: str) -> None:
+        """Render the live world to a single PNG frame."""
+        if not arg:
+            self.emit("usage: :frame <file.png>")
+            return
+        from envgen.pixels import frame_size, render_scene as render_frame, save_png
+
+        try:
+            frame = render_frame(self.session.scene)
+            save_png(arg, frame)
+        except Exception as exc:
+            self.emit(f":frame failed: {exc}")
+            return
+        w, h = frame_size(frame)
+        self.emit(f"wrote {arg} ({w}x{h}px)")
+
+    def _frames(self, arg: str) -> None:
+        """Solve the live world and write the trajectory as PNG frames."""
+        if not arg:
+            self.emit("usage: :frames <dir>")
+            return
+        from envgen.objective_solve import solve_objective
+        from envgen.pixels import render_trajectory, save_trajectory
+
+        result = solve_objective(self.session.scene)
+        if not result.solved:
+            self.emit(f":frames failed: {result.reason}")
+            return
+        try:
+            paths = save_trajectory(arg, render_trajectory(self.session.scene, result.actions))
+        except Exception as exc:
+            self.emit(f":frames failed: {exc}")
+            return
+        self.emit(f"wrote {len(paths)} frame(s) to {arg} — {result.reason}")
+
     def _replay(self) -> None:
         """Verify the op-log replays to the live scene via ``envgen.session.replay``."""
         try:
@@ -256,8 +310,10 @@ def main(
         print(f"could not load scene {path}: {exc}", file=out)
         return 2
 
+    from envgen.objective import objective_from_scene
+
     driver = Harness(scene, out=out)
-    print(f"loaded {path} — goal: {scene.goal}", file=out)
+    print(f"loaded {path} — objective: {objective_from_scene(scene).describe()}", file=out)
     print(render_scene(scene), file=out)
     print("type :help for commands", file=out)
 
